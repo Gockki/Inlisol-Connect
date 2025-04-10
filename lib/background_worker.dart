@@ -4,18 +4,19 @@ import 'package:workmanager/workmanager.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:inli_connect/utils/logger.dart';
 
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     try {
-      print("Background task started: $task");
+      Logger.d("Background task started: $task");
       
       switch (task) {
         case 'fetchDevicesTask':
           String? authToken = inputData?['authToken'];
           if (authToken != null) {
-            print("Fetching devices in the background...");
+            Logger.d("Fetching devices in the background...");
             
             // Check device status and send notifications if needed
             await checkDeviceStatus(authToken);
@@ -25,13 +26,13 @@ void callbackDispatcher() {
           // This is a one-time task to clear the cache
           final prefs = await SharedPreferences.getInstance();
           await prefs.remove('device_locations');
-          print("Device locations cache cleared");
+          Logger.d("Device locations cache cleared");
           break;
       }
       
       return Future.value(true);
     } catch (e) {
-      print("Error in background task: $e");
+      Logger.e("Error in background task", e);
       return Future.value(false);
     }
   });
@@ -47,33 +48,33 @@ Future<void> checkDeviceStatus(String authToken) async {
     final prefs = await SharedPreferences.getInstance();
     
     // Debug - print all keys in SharedPreferences
-    print("Available SharedPreferences keys: ${prefs.getKeys()}");
+    Logger.d("Available SharedPreferences keys: ${prefs.getKeys()}");
     
     // Get previous state with extra validation
     String? previousStatusJson = prefs.getString('last_device_status');
-    print("Raw previous status: $previousStatusJson");
+    Logger.d("Raw previous status: $previousStatusJson");
     
     Map<String, dynamic> previousStatus = {};
     if (previousStatusJson != null && previousStatusJson.isNotEmpty) {
       try {
         previousStatus = json.decode(previousStatusJson);
       } catch (e) {
-        print("Error decoding previous status: $e");
+        Logger.e("Error decoding previous status", e);
         // Reset if corrupted
         previousStatus = {};
       }
     }
     
-    print("Previous device status had ${previousStatus.length} devices");
+    Logger.d("Previous device status had ${previousStatus.length} devices");
     
     // Fetch current active devices
     final activeDevices = await _fetchActiveDevices(authToken);
-    print("Found ${activeDevices.length} active devices");
+    Logger.d("Found ${activeDevices.length} active devices");
     
     // Log more detailed comparison information
-    print("Previous status had ${previousStatus.length} devices, current status has ${activeDevices.length} devices");
+    Logger.d("Previous status had ${previousStatus.length} devices, current status has ${activeDevices.length} devices");
     if (previousStatus.length > activeDevices.length) {
-      print("ALERT: ${previousStatus.length - activeDevices.length} devices appear to have gone offline");
+      Logger.w("ALERT: ${previousStatus.length - activeDevices.length} devices appear to have gone offline");
       
       // For debugging, print the IDs that are missing
       Set<String> previousIds = previousStatus.keys.toSet();
@@ -81,7 +82,7 @@ Future<void> checkDeviceStatus(String authToken) async {
       Set<String> missingIds = previousIds.difference(currentIds);
       
       if (missingIds.isNotEmpty) {
-        print("Missing device IDs: $missingIds");
+        Logger.d("Missing device IDs: $missingIds");
       }
     }
     
@@ -89,12 +90,12 @@ Future<void> checkDeviceStatus(String authToken) async {
     List<String> offlineDevices = [];
     previousStatus.forEach((deviceId, wasActive) {
       if (wasActive == true && !activeDevices.contains(deviceId)) {
-        print("Device $deviceId was previously online but is now offline");
+        Logger.d("Device $deviceId was previously online but is now offline");
         offlineDevices.add(deviceId);
       }
     });
     
-    print("Found ${offlineDevices.length} offline devices");
+    Logger.d("Found ${offlineDevices.length} offline devices");
     
     // Send notifications for offline devices
     if (offlineDevices.isNotEmpty) {
@@ -102,7 +103,7 @@ Future<void> checkDeviceStatus(String authToken) async {
         // Get floor name for the device
         String floorName = await _getDeviceLocation(deviceId, authToken) ?? "Unknown Floor";
         
-        print("Sending notification for offline device $deviceId on floor: $floorName");
+        Logger.i("Sending notification for offline device $deviceId on floor: $floorName");
         
         // Send notification with only floor information
         await _sendLocalNotification(
@@ -132,17 +133,17 @@ Future<void> checkDeviceStatus(String authToken) async {
       String? verifiedStatus = prefs.getString('last_device_status');
       
       if (verifiedStatus == encodedStatus) {
-        print("Status saved successfully with ${newStatus.length} devices");
+        Logger.d("Status saved successfully with ${newStatus.length} devices");
       } else {
-        print("WARNING: Status may not have saved correctly!");
-        print("Original: $encodedStatus");
-        print("Retrieved: $verifiedStatus");
+        Logger.w("WARNING: Status may not have saved correctly!");
+        Logger.d("Original: $encodedStatus");
+        Logger.d("Retrieved: $verifiedStatus");
       }
     } else {
-      print("WARNING: Not saving empty device list to avoid false alerts");
+      Logger.w("WARNING: Not saving empty device list to avoid false alerts");
     }
   } catch (e) {
-    print("Error in checkDeviceStatus: $e");
+    Logger.e("Error in checkDeviceStatus", e);
   }
 }
 
@@ -179,11 +180,11 @@ Future<void> _sendLocalNotification(String title, String body) async {
   await flutterLocalNotificationsPlugin.show(
     0, title, body, platformChannelSpecifics);
   
-  print("Notification sent: $title - $body");
+  Logger.i("Notification sent: $title - $body");
 }
 
 Future<List<String>> _fetchActiveDevices(String authToken) async {
-  print("Fetching active devices...");
+  Logger.d("Fetching active devices...");
   
   final url = "https://iot.inlisol.com/api/tenant/deviceInfos?pageSize=100&page=0&sortProperty=createdTime&sortOrder=DESC&active=true";
   
@@ -202,13 +203,13 @@ Future<List<String>> _fetchActiveDevices(String authToken) async {
         deviceIds.add(deviceId);
       }
       
-      print("Retrieved Active Devices: ${deviceIds.length}");
+      Logger.d("Retrieved Active Devices: ${deviceIds.length}");
       return deviceIds;
     } else {
-      print("Error fetching devices: HTTP ${response.statusCode}");
+      Logger.e("Error fetching devices: HTTP ${response.statusCode}");
     }
   } catch (e) {
-    print("Exception fetching active devices: $e");
+    Logger.e("Exception fetching active devices", e);
   }
   
   return [];
@@ -252,14 +253,14 @@ Future<String?> _getDeviceLocation(String deviceId, String authToken) async {
           if (floorRelations.isNotEmpty && floorRelations[0].containsKey('fromName')) {
             String floorName = floorRelations[0]['fromName'] ?? "Unknown Floor";
             
-            print("Device $deviceId is on floor: $floorName");
+            Logger.d("Device $deviceId is on floor: $floorName");
             return floorName; // Return just the floor name
           }
         }
       }
     }
   } catch (e) {
-    print("Error getting device location: $e");
+    Logger.e("Error getting device location", e);
   }
   
   return "Unknown Floor";
@@ -284,5 +285,5 @@ Future<void> testNotification(String authToken) async {
 Future<void> clearLocationCache() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.remove('device_locations');
-  print("Device locations cache cleared");
+  Logger.d("Device locations cache cleared");
 }
